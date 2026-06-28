@@ -1,206 +1,201 @@
 # Personal Banker Copilot
 
-> A Text-to-SQL agent built for Franq's Personal Bankers — query client behavioral data in natural language, get SQL, charts, and plain-language answers in PT-BR.
+> Agente Text-to-SQL para Personal Bankers da Franq — consulte dados comportamentais de clientes em linguagem natural e receba SQL, gráficos e respostas em PT-BR.
 
-![Architecture](docs/architecture.png)
-
----
-
-## The Problem
-
-Franq operates a marketplace of 150+ financial products. Personal Bankers need to understand client behavior — purchase patterns, campaign responses, complaint trends — to match clients to the right products.
-
-Today that means either writing SQL manually or waiting for a BI team. This copilot eliminates both bottlenecks: a banker types a question in Portuguese and gets a structured answer with a chart, the SQL that produced it, and the reasoning that got there.
+![Arquitetura](docs/architecture.png)
 
 ---
 
-## Quick Start
+## O Problema
+
+A Franq opera um marketplace com mais de 150 produtos financeiros. Personal Bankers precisam entender o comportamento dos clientes — padrões de compra, respostas a campanhas, tendências de reclamações — para fazer o match certo com cada produto.
+
+Hoje isso significa escrever SQL manualmente ou esperar pelo time de BI. Este copilot elimina os dois gargalos: o banker digita uma pergunta em português e recebe uma resposta estruturada com gráfico, o SQL que a gerou e o raciocínio por trás.
+
+---
+
+## Como Executar
 
 ```bash
-# 1. Clone and install
+# 1. Clone e instale
 git clone <repo>
 cd personal_banker_copilot
 uv sync
 
-# 2. Configure keys
+# 2. Configure as chaves
 cp .env.example .env
-# Fill in GOOGLE_API_KEY and/or AZURE_OPENAI_* — see .env.example
+# Preencha GOOGLE_API_KEY e/ou AZURE_OPENAI_* — veja .env.example
 
-# 3. Run
+# 3. Execute
 uv run streamlit run app.py
 ```
 
-Requires Python 3.11+. Uses [uv](https://github.com/astral-sh/uv) for dependency management.
+Requer Python 3.11+. Usa [uv](https://github.com/astral-sh/uv) para gerenciamento de dependências.
 
 ---
 
-## Architecture
+## Arquitetura
 
-The agent is implemented as a **7-node LangGraph `StateGraph`**. The challenge explicitly asked for uncertainty navigation, autonomous error correction, and reasoning transparency — conditions that map naturally to a directed graph with typed state and conditional edges.
+O agente é implementado como um **StateGraph de 7 nós com LangGraph**. O desafio pede explicitamente navegação em incertezas, correção autônoma de erros e transparência no raciocínio — condições que se mapeiam naturalmente em um grafo direcionado com estado tipado e arestas condicionais.
 
 ```
-START
+INÍCIO
   │
   ▼
-① Schema Inspector    ← PRAGMA discovery — no LLM, always fresh
+① Inspetor de Schema    ← Descoberta via PRAGMA — sem LLM, sempre atualizado
   │
   ▼
-② Planner             ← Heavy LLM — reasoning plan before any SQL
+② Planejador            ← LLM pesado — plano de raciocínio antes de qualquer SQL
   │
   ▼
-③ SQL Generator       ← Heavy LLM — SQLite-specific query
+③ Gerador de SQL        ← LLM pesado — query específica para SQLite
   │
   ▼
-④ SQL Executor        ← No LLM — runs query, catches exceptions
+④ Executor SQL          ← Sem LLM — executa query e captura exceções
   │
-  ├── error + retries < MAX ──▶ ⑤ Error Recovery ──┐
-  │                               Cheap LLM          │ (loops back)
+  ├── erro + tentativas < MAX ──▶ ⑤ Recuperação de Erro ──┐
+  │                                  LLM leve               │ (loop de retry)
   │
-  ├── max retries exceeded ──▶ ⑦ Response Formatter
+  ├── máx. tentativas excedidas ──▶ ⑦ Formatador
   │
-  └── success ──▶ ⑥ Visualization Agent ──▶ ⑦ Response Formatter ──▶ END
-                    Hybrid: rules + cheap LLM
+  └── sucesso ──▶ ⑥ Visualização ──▶ ⑦ Formatador ──▶ FIM
+                    Híbrido: regras + LLM leve
 ```
 
-### Shared State
+### Estado Compartilhado
 
 ```python
 class AgentState(TypedDict):
-    question: str       # original user input
-    schema:   str       # live PRAGMA output
-    plan:     str       # planner reasoning
-    sql:      str       # current SQL (mutated by recovery)
-    result:   str       # JSON string of query rows
-    error:    str       # last SQLite exception
-    retries:  int       # retry counter
+    question: str       # pergunta original do usuário
+    schema:   str       # saída live do PRAGMA
+    plan:     str       # raciocínio do planejador
+    sql:      str       # SQL atual (mutado pela recuperação de erro)
+    result:   str       # JSON string com as linhas da query
+    error:    str       # última exceção do SQLite
+    retries:  int       # contador de tentativas
     viz_spec: dict      # {type, x, y, orientation, title}
-    response: str       # final PT-BR natural language answer
-    trace:    list[str] # per-node latency steps
+    response: str       # resposta final em PT-BR
+    trace:    list[str] # passos com latência por nó
 ```
 
 ---
 
-## Engineering Decisions
+## Decisões de Engenharia
 
-### Why LangGraph?
+### Por que LangGraph?
 
-The challenge asked for an agent that "navigates uncertainty, seeks its own answers, detects errors and corrects itself." Those are state transitions, not a linear chain. LangGraph models them as first-class graph edges — the retry loop between executor and error recovery is a real conditional edge, not a `for` loop inside a monolith.
+O desafio pede um agente que "navega incertezas, busca suas próprias respostas, percebe erros e tenta corrigir sozinho." Essas são transições de estado, não uma cadeia linear. O LangGraph as modela como arestas reais de grafo — o loop de retry entre executor e recuperação de erro é uma aresta condicional de verdade, não um `for` loop dentro de um monólito.
 
-### Why a Planner node before SQL generation?
+### Por que um nó Planejador antes do gerador de SQL?
 
-Complex multi-join questions fail at SQL generation without prior reasoning. The planner forces the heavy LLM to identify which tables are needed and why before writing any SQL. In testing, this reduced hallucinated column names and missing JOINs significantly.
+Perguntas complexas com múltiplos joins falham na geração de SQL sem raciocínio prévio. O planejador força o LLM pesado a identificar quais tabelas são necessárias e por quê antes de escrever qualquer SQL. Nos testes, isso reduziu significativamente nomes de colunas alucinados e JOINs faltando.
 
-### Why hybrid visualization routing?
+### Por que roteamento híbrido de visualização?
 
-Calling an LLM to decide "should this be a table or a chart?" costs tokens on every query. The visualization agent uses three layers ordered by cost:
+Chamar um LLM para decidir "isso deve ser tabela ou gráfico?" custa tokens em cada query. O agente de visualização usa três camadas ordenadas por custo:
 
-1. **Deterministic pre-filters** (no LLM): single scalar → `metric`, >15 rows → `table`, single row → `table`
-2. **Keyword intent classifier** (no LLM): "top/maior/menor" → ranking → horizontal bar; "tendência/mês a mês" → line
-3. **Cheap LLM** (only for ambiguous 2-15 row results): receives intent hint + column types + sample data
+1. **Pré-filtros determinísticos** (sem LLM): escalar único → `métrica`, >15 linhas → `tabela`, linha única → `tabela`
+2. **Classificador de intenção por palavras-chave** (sem LLM): "top/maior/menor" → ranking → barra horizontal; "tendência/mês a mês" → linha
+3. **LLM leve** (só para resultados ambíguos de 2 a 15 linhas): recebe dica de intenção + tipos de coluna + amostra dos dados
 
-~80% of queries never reach the LLM call. This matters at scale.
+~80% das queries nunca chegam à chamada LLM. Isso importa em escala.
 
-### Why provider abstraction?
+### Por que abstração de provedores?
 
-LLM selection is an engineering decision, not a product decision — it has latency, cost, and reliability constraints that change over time. Isolating provider choice behind a common interface means the seven nodes never change when the underlying model changes. From the factory:
+Seleção de LLM é uma decisão de engenharia, não de produto — tem restrições de latência, custo e confiabilidade que mudam ao longo do tempo. Isolar a escolha do provedor atrás de uma interface comum significa que os sete nós nunca mudam quando o modelo subjacente muda:
 
 ```python
 def get_llm(tier: str = "heavy") -> BaseChatModel:
-    # resolves thread-local → env var → default
-    # returns ChatOpenAI or ChatGoogleGenerativeAI
-    # caller never knows which
+    # resolve thread-local → variável de ambiente → padrão
+    # retorna ChatOpenAI ou ChatGoogleGenerativeAI
+    # o chamador nunca sabe qual
 ```
 
-This also enabled the benchmark tab — see below.
+Isso também habilitou a aba de benchmark — veja abaixo.
 
-### Why a benchmark tab?
+### Por que uma aba de benchmark?
 
-Initially the challenge called for a single-model deploy. During development it became clear that choosing the right LLM is itself part of the engineering problem. Rather than doing that analysis offline in a notebook, I exposed it as a tool inside the app:
+Inicialmente o desafio pedia um deploy com modelo único. Durante o desenvolvimento ficou claro que escolher o LLM certo é parte do problema de engenharia em si. Em vez de fazer essa análise offline em um notebook, expus como ferramenta dentro do app:
 
-- All models run in parallel via `ThreadPoolExecutor`
-- Results appear live as each model finishes
-- Every run appends to `data/llms_comparison.csv` for historical comparison
+- Todos os modelos rodam em paralelo via `ThreadPoolExecutor`
+- Resultados aparecem ao vivo conforme cada modelo termina
+- Cada run é anexado em `data/llms_comparison.csv` para comparação histórica
 
-The benchmark is a **development and operations tool**, not a user-facing feature. It answers the question "which model should we deploy to production?" with real data from the actual workload.
+O benchmark é uma **ferramenta de desenvolvimento e operações**, não uma feature para o usuário final. Ele responde à pergunta "qual modelo devemos deployar em produção?" com dados reais da carga de trabalho real.
 
 ---
 
-## LLM Cost Analysis
+## Análise de Custos — LLMs
 
-Results from live benchmark runs against a campaign effectiveness question:
+Resultados de runs reais de benchmark com pergunta de efetividade de campanhas:
 
-| Model | Provider | Latency | Cost/query | Notes |
+| Modelo | Provedor | Latência | Custo/query | Observação |
 |---|---|---|---|---|
-| GPT-5.4 Nano | Azure Foundry | 8.7s | **$0.00011** | Best value, concise answers |
-| Kimi K2.5 | Azure Foundry | ~48s | $0.00036 | Uniquely returns revenue in BRL |
-| GPT-4.1 | Azure Foundry | 6.4s | $0.00054 | **Sweet spot** — half the cost of 4o |
-| Grok 4.1 Fast | Azure Foundry | 8.4s | $0.00054 | Strong % metrics framing |
-| GPT-4o | Azure Foundry | 7.3s | $0.00108 | Most narrative, highest cost |
-| Gemini 2.5 Flash | Google AI Studio | ~8s | $0.00030 | Free tier: 40 req/day with 2-key rotation |
-| Gemini 2.0 Flash Lite | Google AI Studio | ~5s | $0.00010 | Free tier: 1,500 req/day — best for dev |
+| GPT-5.4 Nano | Azure Foundry | 8.7s | **$0.00011** | Melhor custo-benefício, respostas concisas |
+| Kimi K2.5 | Azure Foundry | ~48s | $0.00036 | Único que retorna receita em R$ |
+| GPT-4.1 | Azure Foundry | 6.4s | $0.00054 | **Sweet spot** — metade do custo do 4o |
+| Grok 4.1 Fast | Azure Foundry | 8.4s | $0.00054 | Boa formatação em percentuais |
+| GPT-4o | Azure Foundry | 7.3s | $0.00108 | Narrativa mais completa, maior custo |
+| Gemini 2.5 Flash | Google AI Studio | ~8s | $0.00030 | Tier gratuito: 40 req/dia com rotação de 2 chaves |
+| Gemini 2.0 Flash Lite | Google AI Studio | ~5s | $0.00010 | Tier gratuito: 1.500 req/dia — ideal para dev |
 
-**Recommendation for production:** GPT-4.1 as default (cost/quality balance). Gemini 2.0 Flash Lite for development and high-volume internal tooling.
+**Recomendação para produção:** GPT-4.1 como padrão (equilíbrio custo/qualidade). Gemini 2.0 Flash Lite para desenvolvimento e tooling interno de alto volume.
 
-Each model interprets the same SQL result differently — GPT-4o emphasizes narrative, Kimi returns absolute revenue, Grok uses percentage framing. That's useful signal when deciding which model to surface to end users.
+Cada modelo interpreta o mesmo resultado SQL de forma diferente — GPT-4o enfatiza narrativa, Kimi retorna receita absoluta, Grok usa percentuais. Isso é sinal útil na hora de decidir qual modelo expor aos usuários finais.
 
 ---
 
-## Sample Queries
+## Exemplos de Consultas
 
-All five questions from the challenge brief, tested end-to-end:
+As cinco perguntas do enunciado do desafio, testadas end-to-end:
 
-```sql
--- 1. Top states by client count
-"Quais os 5 estados com maior número de clientes?"
+```
+1. "Quais os 5 estados com maior número de clientes?"
 
--- 2. Campaign effectiveness
-"Quais as campanhas de marketing que foram mais efetivas em 2024?"
+2. "Quais as campanhas de marketing que foram mais efetivas em 2024?"
 
--- 3. Monthly complaint trend
-"Qual a tendência de reclamações por canal no último ano?"
+3. "Qual a tendência de reclamações por canal no último ano?"
 
--- 4. Unresolved complaints by channel
-"Qual o número de reclamações não resolvidas por canal?"
+4. "Qual o número de reclamações não resolvidas por canal?"
 
--- 5. Product categories by average purchases per client
-"Quais categorias de produto tiveram o maior número de compras em média por cliente?"
+5. "Quais categorias de produto tiveram o maior número de compras em média por cliente?"
 ```
 
-The agent returns SQL, a Plotly chart (bar, line, pie, table, or metric depending on result shape), and a 2-3 sentence PT-BR explanation.
+O agente retorna SQL, um gráfico Plotly (barra, linha, pizza, tabela ou métrica dependendo do formato do resultado) e uma explicação de 2-3 frases em PT-BR.
 
 ---
 
-## Observability
+## Observabilidade
 
-LangFuse is wired into `graph.invoke()` via optional callbacks. Every run produces:
+O LangFuse está conectado ao `graph.invoke()` via callbacks opcionais. Cada run produz:
 
-- One trace per query with per-node spans
-- Token counts and latency per node
-- Session IDs tagged `{banker_id}:{provider}` (Tab 1) or `benchmark:{provider}` (Tab 2)
+- Uma trace por query com spans por nó
+- Contagem de tokens e latência por nó
+- Session IDs tagueados como `{banker_id}:{provider}` (Aba 1) ou `benchmark:{provider}` (Aba 2)
 
-If LangFuse keys are not set, the agent runs normally — the integration degrades gracefully to `None`.
+Se as chaves do LangFuse não estiverem configuradas, o agente roda normalmente — a integração degrada graciosamente para `None`.
 
-Per-banker usage is also logged locally to `data/logs/<banker_id>.jsonl` with cost estimates, intent classification, and retry counts. This feeds the sidebar metrics panel and is designed for a Parquet → DuckDB upgrade path when volume grows.
+O uso por banker também é logado localmente em `data/logs/<banker_id>.jsonl` com estimativas de custo, classificação de intenção e contagem de retries. Isso alimenta o painel de métricas na sidebar e foi desenhado para uma trajetória de upgrade Parquet → DuckDB conforme o volume crescer.
 
 ---
 
-## Scaling to Production
+## Escalabilidade para Produção
 
-This demo runs on SQLite + Google AI Studio free tier. Here is what changes at Franq's scale:
+Esta demo roda em SQLite + tier gratuito do Google AI Studio. O que muda na escala da Franq:
 
-| Layer | Demo | Production |
+| Camada | Demo | Produção |
 |---|---|---|
-| Database | SQLite (local file) | Cloud SQL (PostgreSQL) or BigQuery |
-| LLM | Google AI Studio free tier | Vertex AI Gemini or Azure OpenAI with SLAs |
-| Auth | None | IAM + per-banker JWT |
-| Logging | JSONL → local disk | Parquet → GCS → BigQuery |
-| Deployment | Streamlit Community Cloud | Cloud Run (containerized) |
-| Secrets | `.env` file | Secret Manager |
-| Schema discovery | PRAGMA on startup | Cached metadata catalog with refresh |
+| Banco de dados | SQLite (arquivo local) | Cloud SQL (PostgreSQL) ou BigQuery |
+| LLM | Google AI Studio free tier | Vertex AI Gemini ou Azure OpenAI com SLAs |
+| Autenticação | Nenhuma | IAM + JWT por banker |
+| Logging | JSONL → disco local | Parquet → GCS → BigQuery |
+| Deploy | Streamlit Community Cloud | Cloud Run (containerizado) |
+| Segredos | Arquivo `.env` | Secret Manager |
+| Descoberta de schema | PRAGMA no startup | Catálogo de metadados com refresh |
 
-The agent code itself does not change between environments. Provider selection, database connection, and logging destination are all configuration — not logic.
+O código do agente em si não muda entre ambientes. Seleção de provedor, conexão com banco e destino de logging são configuração — não lógica.
 
-### What a production deploy looks like
+### Como ficaria um deploy em produção
 
 ```
 Personal Banker (browser)
@@ -208,89 +203,89 @@ Personal Banker (browser)
         ▼
    Cloud Run (Streamlit)
         │
-        ├──▶ Vertex AI Gemini (heavy nodes)
-        ├──▶ Vertex AI Gemini Flash (cheap nodes)
+        ├──▶ Vertex AI Gemini (nós pesados)
+        ├──▶ Vertex AI Gemini Flash (nós leves)
         │
-        ├──▶ Cloud SQL (query execution)
+        ├──▶ Cloud SQL (execução de queries)
         │
-        ├──▶ LangFuse (observability)
+        ├──▶ LangFuse (observabilidade)
         │
-        └──▶ GCS / BigQuery (usage logs → banker analytics)
+        └──▶ GCS / BigQuery (logs de uso → analytics por banker)
 ```
 
 ---
 
-## Known Limitations
+## Limitações Conhecidas
 
-**Multi-turn memory not implemented.** Each question starts fresh — the agent has no context from previous questions in the same session. Follow-up questions like "show me the same data for São Paulo only" require the full question to be restated.
+**Memória multi-turn não implementada.** Cada pergunta começa do zero — o agente não tem contexto das perguntas anteriores na mesma sessão. Perguntas de follow-up como "mostre o mesmo só para São Paulo" exigem que a pergunta completa seja refeita.
 
-**Schema-dependent quality.** SQL quality degrades if column names are ambiguous or if the question requires domain knowledge not present in the schema (e.g., "high-value clients" has no definition in the database).
+**Qualidade dependente do schema.** A qualidade do SQL degrada se os nomes das colunas forem ambíguos ou se a pergunta exigir conhecimento de domínio não presente no schema (ex.: "clientes de alto valor" não tem definição no banco).
 
-**Free-tier Gemini quota.** Google AI Studio limits free usage to 40 requests/day (with two-key rotation). The Azure Foundry models have no such limit.
+**Quota do Gemini no tier gratuito.** O Google AI Studio limita o uso gratuito a 40 requisições/dia (com rotação de duas chaves). Os modelos Azure Foundry não têm essa limitação.
 
-**Kimi K2.5 latency.** Azure Foundry adds routing overhead for third-party models. Kimi consistently runs 45-55 seconds — above the 45s benchmark timeout. Not a code issue; infrastructure constraint.
+**Latência do Kimi K2.5.** O Azure Foundry adiciona overhead de roteamento para modelos de terceiros. O Kimi consistentemente leva 45-55 segundos — acima do timeout de benchmark de 45s. Não é um problema de código; é uma restrição de infraestrutura.
 
-**No SQL injection guardrails.** The generated SQL is run directly against the database. In production, a read-only database user and query allowlist would be required.
+**Sem guardrails contra SQL injection.** O SQL gerado é executado diretamente no banco. Em produção, um usuário de banco read-only e uma allowlist de queries seriam necessários.
 
 ---
 
 ## Roadmap
 
-**Deploy 1 — Multi-turn memory**
-Add `ConversationBufferMemory` or `RunnableWithMessageHistory` so bankers can refine queries conversationally. "Show me the same for SP" should work.
+**Deploy 1 — Memória multi-turn**
+Adicionar `ConversationBufferMemory` ou `RunnableWithMessageHistory` para bankers refinarem queries conversacionalmente. "Mostre o mesmo para SP" deve funcionar.
 
-**Deploy 2 — Production hardening**
-Read-only DB user, query timeout, result row cap, PII redaction in logs, Cloud Run container.
+**Deploy 2 — Hardening para produção**
+Usuário DB read-only, timeout de query, cap de linhas no resultado, redação de PII nos logs, container Cloud Run.
 
-**Deploy 3 — Banker analytics**
-Aggregate all `data/logs/*.jsonl` → Parquet → DuckDB. Surface patterns: which questions are asked most, which fail most, which cost most. Feed back into prompt improvements.
+**Deploy 3 — Analytics por banker**
+Agregar todos os `data/logs/*.jsonl` → Parquet → DuckDB. Surfaçar padrões: quais perguntas são mais feitas, quais mais falham, quais custam mais. Retroalimentar melhorias nos prompts.
 
 ---
 
-## Project Structure
+## Estrutura do Projeto
 
 ```
 personal_banker_copilot/
 ├── agent/
-│   ├── graph.py                   # LangGraph StateGraph + routing
+│   ├── graph.py                   # StateGraph LangGraph + roteamento
 │   ├── state.py                   # AgentState TypedDict
 │   └── nodes/
-│       ├── schema_inspector.py    # Node 1 — PRAGMA, no LLM
-│       ├── planner.py             # Node 2 — heavy LLM
-│       ├── sql_generator.py       # Node 3 — heavy LLM
-│       ├── sql_executor.py        # Node 4 — no LLM
-│       ├── error_recovery.py      # Node 5 — cheap LLM
-│       ├── visualization_agent.py # Node 6 — hybrid routing
-│       └── response_formatter.py  # Node 7 — cheap LLM
+│       ├── schema_inspector.py    # Nó 1 — PRAGMA, sem LLM
+│       ├── planner.py             # Nó 2 — LLM pesado
+│       ├── sql_generator.py       # Nó 3 — LLM pesado
+│       ├── sql_executor.py        # Nó 4 — sem LLM
+│       ├── error_recovery.py      # Nó 5 — LLM leve
+│       ├── visualization_agent.py # Nó 6 — roteamento híbrido
+│       └── response_formatter.py  # Nó 7 — LLM leve
 ├── utils/
-│   ├── llm.py                     # Provider-agnostic factory (7 providers)
-│   ├── llm_output.py              # extract_text() — handles LangChain content blocks
-│   ├── database.py                # Dynamic schema discovery
-│   └── logger.py                  # JSONL per-banker logging + cost estimates
+│   ├── llm.py                     # Factory agnóstica de provedor (7 provedores)
+│   ├── llm_output.py              # extract_text() — trata content blocks do LangChain
+│   ├── database.py                # Descoberta dinâmica de schema
+│   └── logger.py                  # Logging JSONL por banker + estimativas de custo
 ├── data/
-│   └── franq.db                   # Challenge SQLite database
+│   └── franq.db                   # Banco SQLite do desafio
 ├── docs/
-│   └── architecture.png           # LangGraph flow diagram
+│   └── architecture.png           # Diagrama de fluxo LangGraph
 ├── devlog/
-│   ├── p1.md                      # Day 1-2 build log
-│   └── p2.md                      # Day 2-3 fixes and benchmark log
-├── app.py                         # Streamlit UI (Single Deploy + LLM Comparison tabs)
-├── pyproject.toml                 # uv-compatible dependencies
-├── .env.example                   # Key placeholders — copy to .env
+│   ├── p1.md                      # Log de construção — Dias 1 e 2
+│   └── p2.md                      # Log de correções e benchmark — Dias 2 e 3
+├── app.py                         # UI Streamlit (abas Deploy Único + Comparação de LLMs)
+├── pyproject.toml                 # Dependências compatíveis com uv
+├── .env.example                   # Placeholders de chaves — copie para .env
 └── .gitignore
 ```
 
 ---
 
-## Tech Stack
+## Stack Tecnológica
 
-| Layer | Choice | Reason |
+| Camada | Escolha | Motivo |
 |---|---|---|
-| Agent orchestration | LangGraph | Graph models retries, uncertainty, and trace naturally |
-| LLM (heavy) | Gemini 2.5 Flash / GPT-4.1 | Strong SQL reasoning, configurable |
-| LLM (cheap) | Gemini 2.0 Flash Lite / GPT-5.4 Nano | Cost-efficient for formatting and viz |
-| UI | Streamlit | Fast iteration, free cloud deploy |
-| Database | SQLite | Zero-infra, matches challenge data |
-| Observability | LangFuse | Per-node spans, token counts, latency |
-| Package manager | uv | 10x faster than pip |
-| Parallelism | ThreadPoolExecutor | Benchmark runs all models simultaneously |
+| Orquestração do agente | LangGraph | Grafo modela retries, incerteza e trace naturalmente |
+| LLM (pesado) | Gemini 2.5 Flash / GPT-4.1 | Forte raciocínio SQL, configurável |
+| LLM (leve) | Gemini 2.0 Flash Lite / GPT-5.4 Nano | Custo-eficiente para formatação e viz |
+| UI | Streamlit | Iteração rápida, deploy gratuito em cloud |
+| Banco de dados | SQLite | Zero infra, compatível com os dados do desafio |
+| Observabilidade | LangFuse | Spans por nó, contagem de tokens, latência |
+| Gerenciador de pacotes | uv | 10x mais rápido que pip |
+| Paralelismo | ThreadPoolExecutor | Benchmark roda todos os modelos simultaneamente |
