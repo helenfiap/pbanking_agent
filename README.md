@@ -24,7 +24,7 @@ Para operar um marketplace com mais de 150 produtos financeiros, Personal Banker
 ## Como Executar
 
 ```bash
-git clone <repo>
+git clone "https://github.com/helenfiap/pbanking_agent"
 cd personal_banker_copilot
 uv sync
 cp .env.example .env   # preencha as chaves, veja abaixo o guia
