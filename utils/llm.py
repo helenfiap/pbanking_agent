@@ -15,11 +15,11 @@ AZURE_MODELS = {
     "azure-deepseek": {"heavy": "DeepSeek-V3.2",               "cheap": "DeepSeek-V3.2"},
 }
 
-# gemini-2.5-flash:      best quality, 20 req/day free (default)
-# gemini-2.0-flash-lite: 1500 req/day free (gemini-lite provider)
-# gemini-2.5-pro:        thinking model, slow (gemini-pro provider)
+# gemini-2.5-flash:  best quality, 20 req/day free (default)
+# gemini-3.5-flash:  alternative flash, confirmed working (gemini-35 provider)
+# gemini-2.5-pro:    thinking model, slow (gemini-pro provider)
 GEMINI_PRIMARY  = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_FALLBACK = "gemini-2.0-flash-lite"
+GEMINI_35_FLASH = "gemini-3.5-flash"
 
 # Thread-local provider override for benchmark tab
 _thread_local = threading.local()
@@ -54,8 +54,8 @@ def get_llm(tier: str = "heavy"):
             temperature=0,
         )
 
-    if current_provider == "gemini-lite":
-        return _make_gemini(GEMINI_FALLBACK)
+    if current_provider == "gemini-35":
+        return _make_gemini(GEMINI_35_FLASH)
 
     if current_provider == "gemini-pro":
         return _make_gemini("gemini-2.5-pro")

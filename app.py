@@ -143,7 +143,7 @@ def render_viz(final_state: dict, key: str = ""):
 
 PROVIDER_LABELS = {
     "gemini":         "⚡ Gemini 2.5 Flash",
-    "gemini-lite":    "🌿 Gemini 2.0 Flash Lite",
+    "gemini-35":      "🌿 Gemini 3.5 Flash",
     "gemini-pro":     "✨ Gemini 2.5 Pro",
     "azure-deepseek": "🐋 DeepSeek V3.2",
     "azure":          "🔵 GPT-4o",
@@ -335,7 +335,7 @@ with tab2:
     selected = st.multiselect(
         "Modelos a comparar",
         options=list(PROVIDER_LABELS.keys()),
-        default=["azure", "azure-41", "azure-nano", "azure-deepseek", "azure-grok", "gemini", "gemini-lite"],
+        default=["azure", "azure-41", "azure-nano", "azure-deepseek", "azure-grok", "gemini", "gemini-35"],
         format_func=lambda x: PROVIDER_LABELS[x],
     )
 
