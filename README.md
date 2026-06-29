@@ -1,6 +1,6 @@
 # Personal Banker Copilot
 ### Agentic Text-to-SQL Platform built with LangGraph
-
+![Demo](https://s3.ezgif.com/tmp/ezgif-300a611e21b81f0f.gif)
 > O projeto implementa um workflow agêntico capaz de responder perguntas em linguagem natural sobre um banco de dados relacional, considerando práticas modernas de AI Engineering:
 - **Orquestração com LangGraph** com estado tipado e roteamento condicional
 - **Design modular** com 7 nós independentes e testáveis
