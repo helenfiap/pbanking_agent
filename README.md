@@ -137,8 +137,53 @@ Inicialmente o desafio pedia um deploy com modelo único. Durante o desenvolvime
 
 O benchmark é uma **ferramenta de desenvolvimento e operações**, não uma feature para o usuário final. Ele responde à pergunta "qual modelo devemos deployar em produção?" com dados reais da carga de trabalho real.
 
+
 ---
 
+## Bugs Encontrados e Corrigidos por Componente
+
+Um registro honesto dos problemas reais encontrados durante o desenvolvimento — cada item é um exemplo concreto do ciclo de observar → diagnosticar → corrigir que o agente também executa internamente.
+
+### `utils/llm.py` — Factory de LLM
+
+| Problema | Causa | Correção |
+|---|---|---|
+| `StopIteration` em todos os nós com Gemini | `itertools.cycle` singleton criava 1 iterator global; `with_fallbacks` instanciava o LLM 2x por chamada, esgotando o ciclo de chaves | Removido singleton e `with_fallbacks`; trocado por `_key_counter` inteiro com lock |
+| Erro 401 UNAUTHENTICATED após rotação | Nome de modelo `gemini-3.5-flash` (inexistente) mascarava auth error válido | Corrigido para `gemini-2.5-flash`; `with_fallbacks` removido para expor erros reais |
+| Gemini com quota esgotada em poucas queries | 2 instâncias por `get_llm()` call × 7 nós = 14 requisições por pergunta | Instância única por call; quota real: 20 req/dia por chave |
+
+### `utils/database.py` — Schema Inspector
+
+| Problema | Causa | Correção |
+|---|---|---|
+| Queries retornando 0 linhas para canal | LLM gerava `canal = 'app'` mas DB armazena `'App'` — SQLite é case-sensitive em strings | Schema enriquecido com valores exatos: `canal — valores exatos: ['App', 'Loja Física', 'Site']` |
+| "último ano" retornando quase nada | `date('now')` retorna 2026, DB vai até 2025 | SQL prompt proibido de usar `date('now')` para dados históricos; range real exposto no schema |
+
+### `agent/nodes/sql_executor.py` — Executor SQL
+
+| Problema | Causa | Correção |
+|---|---|---|
+| Colunas com nomes como `COUNT(DISTINCT cm.cliente_id)` na UI | LLM esquecia de usar `AS alias` em funções de agregação | `_clean_columns()` pós-processador: renomeia qualquer coluna que comece com `COUNT(`, `SUM(`, `AVG(` etc. antes de chegar no frontend |
+
+### `agent/nodes/visualization_agent.py` — Agente de Visualização
+
+| Problema | Causa | Correção |
+|---|---|---|
+| Perguntas de tendência retornando tabela | Checagem `n_rows > 15 → table` ocorria **antes** do classificador de intent; série temporal tem ~36 linhas (12 meses × 3 canais) | Bloco de tendência movido para antes do limite de linhas; line chart retornado para até 200 linhas |
+| Gráfico de linha sem separação por canal | `px.line()` não recebia o parâmetro `color` apesar de estar no `viz_spec` | Adicionado `color=color` na chamada `px.line()` — 1 linha de código, 3 horas de debug |
+| GPT-4o desenhando linha sobre eixo categórico | Modelo gerou SQL sem dimensão temporal (GROUP BY canal apenas) → viz agent tentou linha sobre 3 categorias | Guarda-chuva: se `x` não contém padrão de data/mês/ano → converte automaticamente para barra horizontal |
+
+### `app.py` — Interface Streamlit
+
+| Problema | Causa | Correção |
+|---|---|---|
+| `StreamlitDuplicateElementId` no benchmark | 7 modelos gerando `plotly_chart` com mesmo ID auto-gerado (mesmo tipo + mesmo título) | Parâmetro `key=f"viz_{type}_{provider}"` em todos os `st.plotly_chart` |
+| `ArrowInvalid` crash na tabela de resumo | Coluna mista com `float` e string `"—"` confunde o encoder PyArrow do Streamlit | `.astype(str)` no DataFrame antes de `st.dataframe` |
+| Perguntas clicáveis não preenchendo input | `st.text_input(value=session_state.pop(...))` conflita com widget keyed no Streamlit | Setado `st.session_state["cmp_question"]` diretamente antes do widget |
+| Benchmark com 7 colunas muito estreito | `st.columns(len(results))` com 7 modelos → colunas ilegíveis | Grid quebrado em linhas de max 3 colunas |
+| Arquivo truncado com byte inválido `0xe2` | Ferramentas de edição de texto cortam arquivos com caracteres UTF-8 multibyte (como `—`) | Todas as reescritas completas passaram a usar `cat > file << 'EOF'` via bash |
+
+---
 ## Análise de Custos — LLMs
 
 Resultados de runs reais de benchmark com pergunta de efetividade de campanhas:
@@ -377,13 +422,4 @@ personal_banker_copilot/
 
 ## Stack Tecnológica
 
-| Camada | Escolha | Motivo |
-|---|---|---|
-| Orquestração do agente | LangGraph | Grafo modela retries, incerteza e trace naturalmente |
-| LLM (pesado) | Gemini 2.5 Flash / GPT-4.1 | Forte raciocínio SQL, configurável |
-| LLM (leve) | Gemini 2.0 Flash Lite / GPT-5.4 Nano | Custo-eficiente para formatação e viz |
-| UI | Streamlit | Iteração rápida, deploy gratuito em cloud |
-| Banco de dados | SQLite | Zero infra, compatível com os dados do desafio |
-| Observabilidade | LangFuse | Spans por nó, contagem de tokens, latência |
-| Gerenciador de pacotes | uv | 10x mais rápido que pip |
-| Paralelismo | ThreadPoolExecutor | Benchmark roda todos os modelos simultaneamente |
+| C

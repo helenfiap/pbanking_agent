@@ -10,15 +10,15 @@ def get_connection() -> sqlite3.Connection:
 
 
 def run_query(sql: str) -> pd.DataFrame:
-    """Execute a SQL query and return results as a DataFrame."""
     with get_connection() as conn:
         return pd.read_sql_query(sql, conn)
 
 
 def get_schema() -> str:
     """
-    Dynamically reads the database schema — no hardcoded table names.
-    Returns a human-readable string describing tables, columns, types, and row counts.
+    Dynamically reads schema including distinct values for low-cardinality
+    TEXT/BOOLEAN columns. This prevents the LLM from generating wrong string
+    literals — SQLite is case-sensitive ('App' != 'app', 'WhatsApp' != 'whatsapp').
     """
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -32,7 +32,36 @@ def get_schema() -> str:
             cursor.execute(f"SELECT COUNT(*) FROM {table}")
             count = cursor.fetchone()[0]
 
-            col_defs = ", ".join([f"{col[1]} {col[2]}" for col in columns])
-            schema_parts.append(f"Table: {table} ({count} rows)\nColumns: {col_defs}")
+            col_lines = []
+            for col in columns:
+                col_name = col[1]
+                col_type = col[2].upper()
+                line = f"  - {col_name} ({col_type})"
+
+                if col_type in ("TEXT", "BOOLEAN"):
+                    cursor.execute(f"SELECT COUNT(DISTINCT {col_name}) FROM {table}")
+                    n_distinct = cursor.fetchone()[0]
+                    if n_distinct <= 20:
+                        cursor.execute(
+                            f"SELECT DISTINCT {col_name} FROM {table} "
+                            f"WHERE {col_name} IS NOT NULL ORDER BY {col_name} LIMIT 20"
+                        )
+                        vals = [str(r[0]) for r in cursor.fetchall()]
+                        line += f" — valores exatos: {vals}"
+                    elif any(p in col_name.lower() for p in ("data", "date")):
+                        cursor.execute(f"SELECT MIN({col_name}), MAX({col_name}) FROM {table}")
+                        mn, mx = cursor.fetchone()
+                        line += f" — range: '{mn}' a '{mx}'"
+
+                col_lines.append(line)
+
+            schema_parts.append(f"Table: {table} ({count} rows)\n" + "\n".join(col_lines))
+
+        schema_parts.append(
+            "ATENCAO - SQLite e case-sensitive para strings. "
+            "Use EXATAMENTE os valores listados acima "
+            "('App' nao 'app', 'WhatsApp' nao 'whatsapp', 'E-mail' nao 'email'). "
+            "Para filtrar por ano/mes use strftime('%Y', coluna) = '2024'."
+        )
 
         return "\n\n".join(schema_parts)

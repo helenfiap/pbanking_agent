@@ -105,7 +105,7 @@ def run_agent_for_provider(provider: str, question: str) -> dict:
         return {"success": False, "error": str(e), "latency": 0}
 
 
-def render_viz(final_state: dict):
+def render_viz(final_state: dict, key: str = ""):
     if not final_state.get("result") or not final_state.get("viz_spec"):
         return
     df = pd.read_json(StringIO(final_state["result"]), orient="records")
@@ -122,27 +122,35 @@ def render_viz(final_state: dict):
         fig = px.bar(df, x=x, y=y, title=title, color=color, orientation=orientation)
         if orientation == "h":
             fig.update_layout(yaxis={"categoryorder": "total ascending"})
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"viz_bar_{key}")
     elif chart_type == "line" and x and y and x in df.columns and y in df.columns:
-        fig = px.line(df, x=x, y=y, title=title, markers=True)
-        st.plotly_chart(fig, use_container_width=True)
+        # Safety: if x is not a date/time column, a line over categories is meaningless → bar
+        x_is_date = any(p in x.lower() for p in ["mes", "data", "ano", "year", "month", "date", "periodo"])
+        if not x_is_date:
+            fig = px.bar(df, x=y, y=x, title=title, color=color, orientation="h")
+            fig.update_layout(yaxis={"categoryorder": "total ascending"})
+            st.plotly_chart(fig, use_container_width=True, key=f"viz_bar_{key}_fallback")
+        else:
+            fig = px.line(df, x=x, y=y, title=title, markers=True, color=color)
+            st.plotly_chart(fig, use_container_width=True, key=f"viz_line_{key}")
     elif chart_type == "pie" and x and y and x in df.columns and y in df.columns:
         fig = px.pie(df, names=x, values=y, title=title)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"viz_pie_{key}")
     else:
         st.dataframe(df, width="stretch")
 
 
 
 PROVIDER_LABELS = {
-    "gemini":      "⚡ Gemini 2.5 Flash",
-    "gemini-lite": "🌿 Gemini 2.0 Flash Lite",
-    "gemini-pro":  "✨ Gemini 2.5 Pro",
-    "azure":      "🔵 GPT-4o",
-    "azure-41":   "🟣 GPT-4.1",
-    "azure-kimi": "🌙 Kimi K2.5",
-    "azure-grok": "⚡ Grok 4.1 Fast",
-    "azure-nano": "🔬 GPT-5.4 Nano",
+    "gemini":         "⚡ Gemini 2.5 Flash",
+    "gemini-lite":    "🌿 Gemini 3.5 Flash",
+    "gemini-pro":     "✨ Gemini 2.5 Pro",
+    "azure-deepseek": "🐋 DeepSeek V3.2",
+    "azure":          "🔵 GPT-4o",
+    "azure-41":       "🟣 GPT-4.1",
+    "azure-kimi":     "🌙 Kimi K2.5",
+    "azure-grok":     "⚡ Grok 4.1 Fast",
+    "azure-nano":     "🔬 GPT-5.4 Nano",
 }
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -216,7 +224,7 @@ with tab1:
         "Qual o número de reclamações não resolvidas por canal?",
         "Qual a tendência de reclamações por canal no último ano?",
     ]
-    with st.expander("💡 Perguntas de exemplo"):
+    with st.expander("📋 Perguntas do enunciado", expanded=True):
         for q in EXAMPLE_QUESTIONS:
             if st.button(q, key=f"ex_{q}"):
                 st.session_state["prefill"] = q
@@ -308,7 +316,7 @@ with tab1:
                     st.code(final_state["sql"], language="sql")
 
             st.write(final_state["response"])
-            render_viz(final_state)
+            render_viz(final_state, key="tab1")
 
             st.session_state.messages.append({
                 "role": "assistant",
@@ -327,13 +335,29 @@ with tab2:
     selected = st.multiselect(
         "Modelos a comparar",
         options=list(PROVIDER_LABELS.keys()),
-        default=["azure", "azure-41", "azure-nano", "azure-kimi", "azure-grok", "gemini", "gemini-lite"],
+        default=["azure", "azure-41", "azure-nano", "azure-deepseek", "azure-grok", "gemini", "gemini-lite"],
         format_func=lambda x: PROVIDER_LABELS[x],
     )
 
+    with st.expander("📋 Perguntas do enunciado", expanded=True):
+        cmp_cols = st.columns(1)
+        for q in [
+            "Liste os 5 estados com maior número de clientes que compraram via app em maio.",
+            "Quantos clientes interagiram com campanhas de WhatsApp em 2024?",
+            "Quais categorias de produto tiveram o maior número de compras em média por cliente?",
+            "Qual o número de reclamações não resolvidas por canal?",
+            "Qual a tendência de reclamações por canal no último ano?",
+        ]:
+            if st.button(q, key=f"cmp_ex_{q}"):
+                st.session_state["cmp_prefill"] = q
+
+    if "cmp_prefill" in st.session_state:
+        st.session_state["cmp_question"] = st.session_state.pop("cmp_prefill")
+    if "cmp_question" not in st.session_state:
+        st.session_state["cmp_question"] = "Liste os 5 estados com maior número de clientes que compraram via app em maio."
+
     cmp_question = st.text_input(
         "Pergunta para comparar",
-        value="Liste os 5 estados com maior número de clientes que compraram via app em maio.",
         key="cmp_question",
     )
 
@@ -458,32 +482,36 @@ with tab2:
         # ── Side-by-side results ──────────────────────────────────────────────
         st.divider()
         st.subheader("🔍 Respostas lado a lado")
-        cols = st.columns(len(results))
-        for col, (prov, r) in zip(cols, results.items()):
-            with col:
-                st.markdown(f"**{PROVIDER_LABELS[prov]}**")
-                if not r["success"]:
-                    err = r.get("error", "")
-                    if "RESOURCE_EXHAUSTED" in err or "429" in err:
-                        st.warning("🔋 Quota diária atingida")
-                    elif "503" in err or "ServiceUnavailable" in err:
-                        st.warning("⚠️ Modelo indisponível (503)")
-                    elif "404" in err or "DeploymentNotFound" in err:
-                        st.error("❌ Deployment não encontrado")
-                    else:
-                        st.error(f"Erro: {err[:120]}")
-                    continue
+        COLS_PER_ROW = 3
+        items = list(results.items())
+        for row_start in range(0, len(items), COLS_PER_ROW):
+            row_items = items[row_start:row_start + COLS_PER_ROW]
+            cols = st.columns(len(row_items))
+            for col, (prov, r) in zip(cols, row_items):
+                with col:
+                    st.markdown(f"**{PROVIDER_LABELS[prov]}**")
+                    if not r["success"]:
+                        err = r.get("error", "")
+                        if "RESOURCE_EXHAUSTED" in err or "429" in err:
+                            st.warning("🔋 Quota diária atingida")
+                        elif "503" in err or "ServiceUnavailable" in err:
+                            st.warning("⚠️ Modelo indisponível (503)")
+                        elif "404" in err or "DeploymentNotFound" in err:
+                            st.error("❌ Deployment não encontrado")
+                        else:
+                            st.error(f"Erro: {err[:120]}")
+                        continue
 
-                st.metric("Latência", f"{r['latency']}s")
-                st.write(r["response"])
-                render_viz(r)
+                    st.metric("Latência", f"{r['latency']}s")
+                    st.write(r["response"])
+                    render_viz(r, key=prov)
 
-                with st.expander("SQL"):
-                    st.code(r["sql"], language="sql")
+                    with st.expander("SQL"):
+                        st.code(r["sql"], language="sql")
 
-                with st.expander("Trace"):
-                    for step in enrich_trace_with_pct(r["trace"]):
-                        st.write(step)
+                    with st.expander("Trace"):
+                        for step in enrich_trace_with_pct(r["trace"]):
+                            st.write(step)
 
         # Restore provider to tab1 selection after comparison (env var, single thread)
         os.environ["LLM_PROVIDER"] = st.session_state.get("tab1_provider", "gemini")

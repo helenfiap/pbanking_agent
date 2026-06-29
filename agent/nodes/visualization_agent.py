@@ -76,9 +76,11 @@ def visualization_agent(state: AgentState) -> AgentState:
     Pre-filter handles obvious cases without an LLM call:
     - No data          → table
     - Single value     → metric (shown as st.metric in the UI)
+    - Tendência + data → line chart (ignores row limit — time series have many rows)
     - Too many rows    → table
+    - Ranking/contagem → horizontal bar
 
-    LLM handles everything else, enriched with intent hint + data shape.
+    LLM handles everything else.
     """
     start = time.perf_counter()
 
@@ -109,7 +111,7 @@ def visualization_agent(state: AgentState) -> AgentState:
             "trace": state["trace"] + [f"✔ Visualização: métrica ({elapsed:.2f}s)"],
         }
 
-    # Single row, multiple cols → table (no chart makes sense)
+    # Single row, multiple cols → table
     if n_rows == 1:
         elapsed = time.perf_counter() - start
         return {
@@ -118,7 +120,38 @@ def visualization_agent(state: AgentState) -> AgentState:
             "trace": state["trace"] + [f"✔ Visualização: tabela — linha única ({elapsed:.2f}s)"],
         }
 
-    # Too many rows → always table
+    intent = classify_intent(state["question"])
+
+    # Coerce potential numeric columns (handles JSON→pandas object dtype)
+    for col in df.columns:
+        try:
+            df[col] = pd.to_numeric(df[col])
+        except (ValueError, TypeError):
+            pass
+
+    numeric_cols_det = df.select_dtypes(include="number").columns.tolist()
+    category_cols_det = df.select_dtypes(exclude="number").columns.tolist()
+    date_cols_det = has_date_columns(df)
+
+    # ── Tendência → line chart (ignora n_rows — séries temporais têm muitas linhas)
+    if intent == "tendência" and date_cols_det and numeric_cols_det and n_rows <= 200:
+        cat_non_date = [c for c in category_cols_det if c not in date_cols_det]
+        color_col = cat_non_date[0] if cat_non_date else None
+        elapsed = time.perf_counter() - start
+        return {
+            **state,
+            "viz_spec": {
+                "type": "line",
+                "x": date_cols_det[0],
+                "y": numeric_cols_det[0],
+                "orientation": "v",
+                "color": color_col,
+                "title": state["question"][:60],
+            },
+            "trace": state["trace"] + [f"✔ Visualização: line — tendência temporal ({elapsed:.2f}s)"],
+        }
+
+    # ── Too many rows → table (exceto tendência, já tratada acima)
     if n_rows > 15:
         elapsed = time.perf_counter() - start
         return {
@@ -127,24 +160,21 @@ def visualization_agent(state: AgentState) -> AgentState:
             "trace": state["trace"] + [f"✔ Visualização: tabela — {n_rows} linhas ({elapsed:.2f}s)"],
         }
 
-    # ── Deterministic: ranking → horizontal bar (no LLM needed) ─────────────
-    intent = classify_intent(state["question"])
-    if intent == "ranking" and n_cols == 2:
-        numeric_col = df.select_dtypes(include="number").columns
-        category_col = df.select_dtypes(exclude="number").columns
-        if len(numeric_col) == 1 and len(category_col) == 1:
+    # ── Ranking/contagem/comparação → horizontal bar
+    if intent in ("ranking", "contagem", "comparação") and 2 <= n_rows <= 15:
+        if len(numeric_cols_det) >= 1 and len(category_cols_det) >= 1:
             elapsed = time.perf_counter() - start
             return {
                 **state,
                 "viz_spec": {
                     "type": "bar",
-                    "x": numeric_col[0],
-                    "y": category_col[0],
+                    "x": numeric_cols_det[0],
+                    "y": category_cols_det[0],
                     "orientation": "h",
                     "color": None,
                     "title": state["question"][:60],
                 },
-                "trace": state["trace"] + [f"✔ Visualização: bar horizontal — intenção: ranking ({elapsed:.2f}s)"],
+                "trace": state["trace"] + [f"✔ Visualização: bar horizontal — intenção: {intent} ({elapsed:.2f}s)"],
             }
 
     # ── LLM for everything else ───────────────────────────────────────────────
