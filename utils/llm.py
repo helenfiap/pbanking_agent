@@ -17,11 +17,11 @@ AZURE_MODELS = {
 }
 
 # Gemini model cascade (most capable → most available)
-# gemini-3.5-flash:      GA, best for heavy nodes
+# gemini-2.5-flash:      GA, best for heavy nodes (default)
 # gemini-2.5-pro:        thinking model, slow — only for gemini-pro provider
 # gemini-2.0-flash-lite: GA, fastest/cheapest, fallback
 # gemini-2.0-flash:      SHUT DOWN — do not use
-GEMINI_PRIMARY  = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+GEMINI_PRIMARY  = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_FALLBACK = "gemini-2.0-flash-lite"
 
 # ── Thread-local provider override (used by benchmark tab) ───────────────────

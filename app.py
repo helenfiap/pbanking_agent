@@ -130,12 +130,12 @@ def render_viz(final_state: dict):
         fig = px.pie(df, names=x, values=y, title=title)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width="stretch")
 
 
 
 PROVIDER_LABELS = {
-    "gemini":      "⚡ Gemini 3.5 Flash",
+    "gemini":      "⚡ Gemini 2.5 Flash",
     "gemini-lite": "🌿 Gemini 2.0 Flash Lite",
     "gemini-pro":  "✨ Gemini 2.5 Pro",
     "azure":      "🔵 GPT-4o",
@@ -433,8 +433,8 @@ with tab2:
         # ── Summary table ─────────────────────────────────────────────────────
         st.divider()
         st.subheader("📊 Resumo")
-        summary_df = pd.DataFrame(summary_rows)
-        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        summary_df = pd.DataFrame(summary_rows).astype(str)
+        st.dataframe(summary_df, width="stretch", hide_index=True)
 
         # Export buttons (current run)
         col_dl1, col_dl2, _ = st.columns([1, 1, 3])
@@ -476,6 +476,7 @@ with tab2:
 
                 st.metric("Latência", f"{r['latency']}s")
                 st.write(r["response"])
+                render_viz(r)
 
                 with st.expander("SQL"):
                     st.code(r["sql"], language="sql")
@@ -499,7 +500,7 @@ with tab2:
                 hist_df = hist_df[hist_df["run_id"] == selected_run]
             st.dataframe(
                 hist_df[["timestamp","model","latency_s","retries","cost_usd","success","question","sql"]],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
-            st.caption(f"{len(hist_df)} registros · {csv_path}")
+            st.caption(f"{len(his

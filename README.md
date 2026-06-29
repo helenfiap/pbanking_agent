@@ -17,20 +17,32 @@ Hoje isso significa escrever SQL manualmente ou esperar pelo time de BI. Este co
 ## Como Executar
 
 ```bash
-# 1. Clone e instale
 git clone <repo>
 cd personal_banker_copilot
 uv sync
-
-# 2. Configure as chaves
-cp .env.example .env
-# Preencha GOOGLE_API_KEY e/ou AZURE_OPENAI_* — veja .env.example
-
-# 3. Execute
+cp .env.example .env   # preencha as chaves — veja abaixo
 uv run streamlit run app.py
 ```
 
 Requer Python 3.11+. Usa [uv](https://github.com/astral-sh/uv) para gerenciamento de dependências.
+
+### Configuração de chaves
+
+**Provedor 1 — Gemini (Google AI Studio, grátis)**
+Gere sua chave em [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) e adicione ao `.env`:
+```
+GOOGLE_API_KEY=sua_chave_aqui
+GEMINI_MODEL=gemini-2.5-flash   # 20 req/dia free; use gemini-2.0-flash-lite (1.500 req/dia) para dev
+```
+
+**Provedor 2 — Azure AI Foundry (GPT-4o, GPT-4.1, Kimi, Grok, Nano)**
+Acesse seu recurso no [Azure AI Foundry](https://ai.azure.com) e copie o endpoint e a chave:
+```
+AZURE_OPENAI_ENDPOINT=https://<seu-recurso>.services.ai.azure.com/openai/v1
+AZURE_OPENAI_API_KEY=sua_chave_aqui
+```
+
+Os dois provedores são opcionais — o app roda só com Gemini ou só com Azure. A aba de benchmark usa todos os provedores configurados em paralelo.
 
 ---
 
