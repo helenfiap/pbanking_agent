@@ -503,4 +503,4 @@ with tab2:
                 width="stretch",
                 hide_index=True,
             )
-            st.caption(f"{len(his
+            st.caption(f"{len(hist_df)} registros")
