@@ -25,7 +25,7 @@ Para operar um marketplace com mais de 150 produtos financeiros, Personal Banker
 
 ```bash
 git clone "https://github.com/helenfiap/pbanking_agent"
-cd personal_banker_copilot
+cd pbanking_agent
 uv sync
 cp .env.example .env   # preencha as chaves, veja abaixo o guia
 uv run streamlit run app.py
