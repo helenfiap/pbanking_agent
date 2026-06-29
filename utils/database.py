@@ -2,7 +2,7 @@ import sqlite3
 import pandas as pd
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent.parent / "data" / "anexo_desafio_1.db"
+DB_PATH = Path(__file__).parent.parent / "data" / "franq.db"
 
 
 def get_connection() -> sqlite3.Connection:

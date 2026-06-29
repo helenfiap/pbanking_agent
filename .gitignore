@@ -3,6 +3,7 @@
 
 # Runtime data
 data/logs/
+!data/logs/.gitkeep
 data/llms_comparison.csv
 
 # Python

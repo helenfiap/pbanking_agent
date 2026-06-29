@@ -113,6 +113,8 @@ def get_llm(tier: str = "heavy") -> BaseChatModel:
 
 Isso também habilitou a aba de benchmark — veja abaixo.
 
+> **Alinhamento com produção Franq:** a vaga menciona Vertex AI (Gemini) com FastAPI. Esta demo usa Google AI Studio (free tier) para desenvolvimento — a migração para Vertex AI é apenas uma troca de classe no factory (`VertexAI` em vez de `ChatGoogleGenerativeAI`), sem alterar nenhum nó do agente. O wrapper FastAPI ficaria na camada acima do `agent_graph.invoke()`, expondo um endpoint `POST /query` para integração com outros sistemas internos.
+
 ### Por que uma aba de benchmark?
 
 Inicialmente o desafio pedia um deploy com modelo único. Durante o desenvolvimento ficou claro que escolher o LLM certo é parte do problema de engenharia em si. Em vez de fazer essa análise offline em um notebook, expus como ferramenta dentro do app:
@@ -145,23 +147,99 @@ Cada modelo interpreta o mesmo resultado SQL de forma diferente — GPT-4o enfat
 
 ---
 
-## Exemplos de Consultas
+## Exemplos de Consultas Testadas
 
-As cinco perguntas do enunciado do desafio, testadas end-to-end:
+As cinco perguntas do enunciado, com o SQL gerado e o resultado real do banco:
 
+---
+
+**1. "Liste os 5 estados com maior número de clientes que compraram via app em maio."**
+
+```sql
+SELECT c.estado, COUNT(DISTINCT c.id) AS clientes
+FROM clientes c JOIN compras cp ON c.id = cp.cliente_id
+WHERE LOWER(cp.canal) = 'app' AND strftime('%m', cp.data_compra) = '05'
+GROUP BY c.estado ORDER BY clientes DESC LIMIT 5;
 ```
-1. "Quais os 5 estados com maior número de clientes?"
-
-2. "Quais as campanhas de marketing que foram mais efetivas em 2024?"
-
-3. "Qual a tendência de reclamações por canal no último ano?"
-
-4. "Qual o número de reclamações não resolvidas por canal?"
-
-5. "Quais categorias de produto tiveram o maior número de compras em média por cliente?"
 ```
+estado           clientes
+São Paulo               6
+Santa Catarina          3
+Minas Gerais            3
+Paraná                  2
+Espírito Santo          2
+```
+→ Visualização: **gráfico de barras horizontal** (intenção: ranking)
 
-O agente retorna SQL, um gráfico Plotly (barra, linha, pizza, tabela ou métrica dependendo do formato do resultado) e uma explicação de 2-3 frases em PT-BR.
+---
+
+**2. "Quantos clientes interagiram com campanhas de WhatsApp em 2024?"**
+
+```sql
+SELECT COUNT(DISTINCT cliente_id) AS total_clientes
+FROM campanhas_marketing
+WHERE canal = 'WhatsApp' AND strftime('%Y', data_envio) = '2024' AND interagiu = 1;
+```
+```
+total_clientes
+            17
+```
+→ Visualização: **métrica** (resultado escalar único)
+
+---
+
+**3. "Quais categorias de produto tiveram o maior número de compras em média por cliente?"**
+
+```sql
+SELECT categoria, ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT cliente_id), 2) AS media_compras
+FROM compras GROUP BY categoria ORDER BY media_compras DESC LIMIT 5;
+```
+```
+categoria    media_compras
+Roupas                2.21
+Viagens               2.16
+Livros                1.98
+Serviços              1.96
+Eletrônicos           1.92
+```
+→ Visualização: **gráfico de barras horizontal** (intenção: ranking)
+
+---
+
+**4. "Qual o número de reclamações não resolvidas por canal?"**
+
+```sql
+SELECT canal, COUNT(*) AS nao_resolvidas
+FROM suporte WHERE resolvido = 0
+GROUP BY canal ORDER BY nao_resolvidas DESC;
+```
+```
+canal     nao_resolvidas
+Chat                  51
+Telefone              46
+E-mail                41
+```
+→ Visualização: **gráfico de barras** (intenção: comparação)
+
+---
+
+**5. "Qual a tendência de reclamações por canal no último ano?"**
+
+```sql
+SELECT canal, strftime('%Y-%m', data_contato) AS mes, COUNT(*) AS total
+FROM suporte WHERE data_contato >= date('now', '-12 months')
+GROUP BY canal, mes ORDER BY mes, canal;
+```
+```
+canal     mes       total
+Chat      2025-07       9
+E-mail    2025-07       5
+Telefone  2025-07       7
+...
+```
+→ Visualização: **gráfico de linha** (intenção: tendência)
+
+> **Nota sobre case sensitivity:** o campo `canal` em `compras` usa capitalização (`'App'`, `'Site'`, `'Loja Física'`). O agente gera `LOWER(canal) = 'app'` automaticamente quando necessário — um exemplo concreto do loop de erro e correção funcionando.
 
 ---
 
@@ -239,6 +317,14 @@ Usuário DB read-only, timeout de query, cap de linhas no resultado, redação d
 
 **Deploy 3 — Analytics por banker**
 Agregar todos os `data/logs/*.jsonl` → Parquet → DuckDB. Surfaçar padrões: quais perguntas são mais feitas, quais mais falham, quais custam mais. Retroalimentar melhorias nos prompts.
+
+---
+
+## Desafio 2 — Arquitetura (para discussão na entrevista)
+
+O segundo desafio (pipeline de classificação e extração de documentos PDF) não foi implementado, conforme instrução do enunciado. A arquitetura proposta está documentada em [`docs/desafio2_arquitetura.md`](docs/desafio2_arquitetura.md).
+
+O design reutiliza os mesmos padrões do Desafio 1: LangGraph para orquestração, Pydantic como contrato de saída, LLM barato para classificação e LLM médio para extração — com estimativa de ~87% de economia versus soluções com modelos pesados.
 
 ---
 
