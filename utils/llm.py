@@ -19,7 +19,7 @@ AZURE_MODELS = {
 # gemini-2.0-flash-lite: 1500 req/day free (gemini-lite provider)
 # gemini-2.5-pro:        thinking model, slow (gemini-pro provider)
 GEMINI_PRIMARY  = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_FALLBACK = "gemini-3.5-flash"
+GEMINI_FALLBACK = "gemini-2.0-flash-lite"
 
 # Thread-local provider override for benchmark tab
 _thread_local = threading.local()

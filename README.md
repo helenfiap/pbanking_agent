@@ -352,15 +352,39 @@ Personal Banker (browser)
 
 ## Limitações Conhecidas
 
-**Memória multi-turn não implementada.** Cada pergunta começa do zero — o agente não tem contexto das perguntas anteriores na mesma sessão. Perguntas de follow-up como "mostre o mesmo só para São Paulo" exigem que a pergunta completa seja refeita.
+| Limitação | Detalhe |
+|---|---|
+| **Execução local via Streamlit** | Sem containerização, sem reverse proxy, sem autenticação real. Adequado para demo; produção exigiria Cloud Run + IAM |
+| **Sem FastAPI** | A interface é Streamlit direto. Para integração com outros sistemas internos, o `agent_graph.invoke()` precisaria de um wrapper `POST /query` |
+| **SQLite local** | Banco de arquivo único sem concorrência real. Migração para Cloud SQL ou BigQuery é configuração, não refatoração de código |
+| **SQL guard básico** | O executor bloqueia `DROP/DELETE/UPDATE/INSERT/ALTER`, mas não é um sandbox completo. Em produção: usuário read-only no banco + timeout de query |
+| **Custos estimados** | A estimativa de custo por query é calculada por heurística de tokens (palavras × 1.3). Valores reais dependem do tokenizer exato de cada modelo |
+| **LangFuse opcional** | Se as chaves não estiverem configuradas, a observabilidade é silenciosamente desabilitada. Sem LangFuse, há zero visibilidade de spans por nó em produção |
+| **Quota do Gemini no free tier** | Google AI Studio: 20 req/dia por chave (Gemini 2.5 Flash). Para produção sem limite diário: Vertex AI ou Azure OpenAI |
+| **Sem memória multi-turn** | Cada pergunta começa do zero. Follow-ups como "mostre só para SP" exigem reformular a pergunta completa |
+| **Qualidade dependente do schema** | SQL degrada com nomes de colunas ambíguos ou conhecimento de domínio ausente no schema (ex: "clientes de alto valor" não tem definição no banco) |
+| **Latência do Kimi K2.5** | Consistentemente 45-55s no Azure Foundry — overhead de roteamento para modelos de terceiros, não problema de código |
 
-**Qualidade dependente do schema.** A qualidade do SQL degrada se os nomes das colunas forem ambíguos ou se a pergunta exigir conhecimento de domínio não presente no schema (ex.: "clientes de alto valor" não tem definição no banco).
+---
 
-**Quota do Gemini no tier gratuito.** O Google AI Studio limita o uso gratuito a 40 requisições/dia (com rotação de duas chaves). Os modelos Azure Foundry não têm essa limitação.
+## Notas de Avaliação
 
-**Latência do Kimi K2.5.** O Azure Foundry adiciona overhead de roteamento para modelos de terceiros. O Kimi consistentemente leva 45-55 segundos — acima do timeout de benchmark de 45s. Não é um problema de código; é uma restrição de infraestrutura.
+Resultados das 5 perguntas do enunciado rodadas no benchmark com modelos selecionados. Latências médias de 3 runs.
 
-**Sem guardrails contra SQL injection.** O SQL gerado é executado diretamente no banco. Em produção, um usuário de banco read-only e uma allowlist de queries seriam necessários.
+| Pergunta | Modelo | Sucesso | Latência | Viz | Observação |
+|---|---|---|---|---|---|
+| Q1 — Top 5 estados via app em maio | GPT-4.1 | ✅ | ~8s | Barra horizontal | Resultado correto, case-sensitivity resolvida pelo schema enrichment |
+| Q1 — Top 5 estados via app em maio | Gemini 2.5 Flash | ✅ | ~9s | Barra horizontal | Correto; quota esgota rápido no free tier |
+| Q2 — WhatsApp 2024 | Todos os modelos | ✅ | 7-11s | Métrica escalar | Resultado unânime: 17 clientes. Pergunta mais simples do enunciado |
+| Q3 — Categorias por média de compras | GPT-4.1 | ✅ | ~9s | Barra horizontal | Correto com alias `media_compras` |
+| Q3 — Categorias por média de compras | DeepSeek V3.2 | ✅ | ~9s | Barra horizontal | Correto; custo estimado ~$0.00 (contexto curto) |
+| Q4 — Reclamações não resolvidas por canal | Todos | ✅ | 7-13s | Barra horizontal | Unanimidade: Chat>Telefone>E-mail. Caso de uso ideal do agente |
+| Q5 — Tendência por canal no último ano | GPT-4.1 | ✅ | ~10s | Linha multi-série | 3 séries coloridas por canal após fix do `color` em `px.line()` |
+| Q5 — Tendência por canal no último ano | GPT-4o | ⚠️ | ~10s | Barra | Gerou SQL sem dimensão temporal (GROUP BY canal apenas) — viz agent corrigiu para barra |
+| Q5 — Tendência por canal no último ano | Gemini 2.5 Flash | ❌ | — | — | Quota diária esgotada durante testes |
+| Q5 — Tendência por canal no último ano | DeepSeek V3.2 | ✅ | ~9s | Linha multi-série | Melhor custo/resultado nesta pergunta |
+
+**Falhas conhecidas:** Q5 com GPT-4o gera SQL sem agrupamento temporal — o viz agent detecta que o eixo X não é data e converte para barra horizontal como fallback. Comportamento correto, mas idealmente o Planner deveria garantir `GROUP BY mes, canal` para perguntas de tendência.
 
 ---
 

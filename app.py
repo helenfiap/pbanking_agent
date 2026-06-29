@@ -143,7 +143,7 @@ def render_viz(final_state: dict, key: str = ""):
 
 PROVIDER_LABELS = {
     "gemini":         "⚡ Gemini 2.5 Flash",
-    "gemini-lite":    "🌿 Gemini 3.5 Flash",
+    "gemini-lite":    "🌿 Gemini 2.0 Flash Lite",
     "gemini-pro":     "✨ Gemini 2.5 Pro",
     "azure-deepseek": "🐋 DeepSeek V3.2",
     "azure":          "🔵 GPT-4o",
